@@ -13,6 +13,9 @@ Tudo acontece no próprio navegador (WebCodecs + [Mediabunny](https://mediabunny
 
 No Chrome é igual, em `chrome://extensions`.
 
+## Ligar e desligar
+No popup (ícone da extensão) tem a chave **Ligada / Desligada**. Desligada, a extensão não grava nem usa o processador, os botões somem do player e o ícone mostra "OFF". Vale para todas as abas na hora.
+
 ## Como usar
 
 1. Abra uma live do YouTube e deixe tocando. Quando a gravação começa, aparecem no player um pontinho vermelho e os botões **30s** e **1min** (com tesoura), ao lado das configurações.

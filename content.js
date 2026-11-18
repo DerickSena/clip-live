@@ -31,6 +31,7 @@
   let kept = null; // buffer guardado durante um reinício na mesma página
   let checkInterval = null;
   let dead = false;
+  let enabled = true; // liga/desliga do popup (chrome.storage.local "enabled")
   let restartTimer = null;
   let restartTimes = [];
   let clipping = false;
@@ -104,6 +105,14 @@
         teardown();
         return;
       }
+      // Desligada pelo popup: não grava nada e não mostra botões (economiza processador).
+      if (!enabled) {
+        if (session || kept) log('desligada pelo usuário, parando');
+        stopSession();
+        kept = null;
+        removeControls();
+        return;
+      }
       const key = pageKey();
       const player = getPlayer();
       const video = getVideo();
@@ -155,6 +164,7 @@
     clearInterval(checkInterval);
     clearTimeout(restartTimer);
     document.removeEventListener('yt-navigate-finish', onNavigate);
+    try { chrome.storage.onChanged.removeListener(onStorageChange); } catch (e) { /* runtime já morto */ }
     removeControls();
     if (toastEl) toastEl.remove();
   }
@@ -788,6 +798,7 @@
       chunksVideo: s ? currentEpochChunks(s).length : 0,
       adShowing: isAd(getPlayer()),
       hidden: document.hidden,
+      enabled,
       detect: detectInfo(),
     };
   }
@@ -1045,9 +1056,21 @@
   }
   globalThis.__clipLiveTeardown = teardown;
 
+  // Liga/desliga: lê o estado salvo e reage na hora quando o popup muda.
+  function onStorageChange(changes, area) {
+    if (dead || area !== 'local' || !changes.enabled) return;
+    enabled = changes.enabled.newValue !== false;
+    log(enabled ? 'ligada pelo usuário' : 'desligada pelo usuário');
+    check();
+  }
+
   if (checkSupport()) {
     document.addEventListener('yt-navigate-finish', onNavigate);
+    try { chrome.storage.onChanged.addListener(onStorageChange); } catch (e) { /* nada */ }
     checkInterval = setInterval(check, CHECK_MS);
-    check();
+    chrome.storage.local.get({ enabled: true })
+      .then((v) => { enabled = v.enabled !== false; })
+      .catch(() => { /* sem storage: fica ligada */ })
+      .finally(check);
   }
 })();

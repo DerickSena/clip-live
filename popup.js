@@ -10,8 +10,22 @@ async function activeTab() {
   return tab;
 }
 
+let enabled = true;
+
+function showEnabled() {
+  $('enabled').checked = enabled;
+  $('enabledLabel').textContent = enabled ? 'Ligada' : 'Desligada';
+}
+
 async function refreshStatus() {
   const el = $('status');
+  if (!enabled) {
+    el.textContent = 'Desligada: não está gravando nem usando o processador';
+    el.className = 'status';
+    showDiag(null);
+    setButtons(false);
+    return;
+  }
   try {
     const st = await chrome.tabs.sendMessage(tabId, { type: 'status' });
     if (st && st.error) {
@@ -104,7 +118,18 @@ $('changeShortcuts').addEventListener('click', (e) => {
   chrome.tabs.create({ url: 'chrome://extensions/shortcuts' });
 });
 
+$('enabled').addEventListener('change', async (e) => {
+  enabled = e.target.checked;
+  showEnabled();
+  await chrome.storage.local.set({ enabled });
+  refreshStatus();
+});
+
 (async () => {
+  try {
+    enabled = (await chrome.storage.local.get({ enabled: true })).enabled !== false;
+  } catch (e) { enabled = true; }
+  showEnabled();
   const tab = await activeTab();
   tabId = tab ? tab.id : null;
   showShortcuts();

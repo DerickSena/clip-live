@@ -124,3 +124,19 @@ chrome.runtime.onInstalled.addListener(async () => {
     console.warn(TAG, 'falha ao listar abas do YouTube', e);
   }
 });
+
+// Selo "OFF" no ícone quando a gravação está desligada pelo popup.
+async function updateBadge() {
+  try {
+    const { enabled } = await chrome.storage.local.get({ enabled: true });
+    await chrome.action.setBadgeText({ text: enabled === false ? 'OFF' : '' });
+    await chrome.action.setBadgeBackgroundColor({ color: '#666666' });
+  } catch (e) {
+    console.warn(TAG, 'falha ao atualizar o selo', e);
+  }
+}
+chrome.storage.onChanged.addListener((changes, area) => {
+  if (area === 'local' && changes.enabled) updateBadge();
+});
+chrome.runtime.onStartup.addListener(updateBadge);
+chrome.runtime.onInstalled.addListener(updateBadge);

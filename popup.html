@@ -1,0 +1,26 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8">
+  <title>Clip Live</title>
+  <link rel="stylesheet" href="popup.css">
+</head>
+<body>
+  <header>
+    <img src="icons/icon48.png" alt="" width="24" height="24">
+    <h1>Clip Live</h1>
+  </header>
+  <p id="status" class="status">Verificando...</p>
+  <div class="buttons">
+    <button id="clip30" type="button" disabled>30s</button>
+    <button id="clip60" type="button" disabled>1min</button>
+  </div>
+  <p id="result" class="result" hidden></p>
+  <section>
+    <h2>Atalhos</h2>
+    <ul id="shortcuts"></ul>
+    <a href="#" id="changeShortcuts">Mudar atalhos</a>
+  </section>
+  <script src="popup.js"></script>
+</body>
+</html>

@@ -1,0 +1,43 @@
+{
+  "manifest_version": 3,
+  "name": "Clip Live",
+  "version": "1.0.0",
+  "description": "Replay buffer de lives do YouTube: grava os últimos segundos e salva um clipe de 30s ou 1min num clique.",
+  "minimum_chrome_version": "116",
+  "permissions": ["downloads"],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "content_scripts": [
+    {
+      "matches": ["https://www.youtube.com/*"],
+      "js": ["lib/mediabunny.min.cjs", "mux.js", "content.js"],
+      "css": ["content.css"],
+      "run_at": "document_idle"
+    }
+  ],
+  "action": {
+    "default_title": "Clip Live",
+    "default_popup": "popup.html",
+    "default_icon": {
+      "16": "icons/icon16.png",
+      "48": "icons/icon48.png",
+      "128": "icons/icon128.png"
+    }
+  },
+  "icons": {
+    "16": "icons/icon16.png",
+    "48": "icons/icon48.png",
+    "128": "icons/icon128.png"
+  },
+  "commands": {
+    "clip-30": {
+      "suggested_key": { "default": "Alt+Shift+1" },
+      "description": "Clipar os últimos 30s"
+    },
+    "clip-60": {
+      "suggested_key": { "default": "Alt+Shift+2" },
+      "description": "Clipar o último 1min"
+    }
+  }
+}

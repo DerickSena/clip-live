@@ -1,0 +1,9 @@
+node_modules/
+.env
+.env.*
+*.pem
+*.key
+lixeira/
+*.mp4
+.DS_Store
+Thumbs.db

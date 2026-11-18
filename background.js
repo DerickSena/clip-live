@@ -102,3 +102,25 @@ chrome.commands.onCommand.addListener((command, tab) => {
   if (command === 'clip-30') sendClip(30, tab);
   else if (command === 'clip-60') sendClip(60, tab);
 });
+
+// Ao instalar ou recarregar a extensão, o navegador não coloca o content script
+// nas abas que já estavam abertas. Injeta nas abas do YouTube abertas para não precisar de F5.
+chrome.runtime.onInstalled.addListener(async () => {
+  try {
+    const tabs = await chrome.tabs.query({ url: 'https://www.youtube.com/*' });
+    for (const tab of tabs) {
+      try {
+        await chrome.scripting.insertCSS({ target: { tabId: tab.id }, files: ['content.css'] });
+        await chrome.scripting.executeScript({
+          target: { tabId: tab.id },
+          files: ['lib/mediabunny.min.cjs', 'mux.js', 'content.js'],
+        });
+        console.log(TAG, 'injetado na aba aberta', tab.id);
+      } catch (e) {
+        console.warn(TAG, 'não deu para injetar na aba', tab.id, e);
+      }
+    }
+  } catch (e) {
+    console.warn(TAG, 'falha ao listar abas do YouTube', e);
+  }
+});

@@ -29,15 +29,35 @@ async function refreshStatus() {
       el.className = 'status rec';
       setButtons(st.chunksVideo > 0);
     } else {
-      el.textContent = 'Abra uma live do YouTube';
+      // A extensão está na aba, mas não achou live: mostra o porquê.
+      const d = st && st.detect;
+      el.textContent = d && d.page && d.page.startsWith('/') && !d.page.includes(':')
+        ? 'Abra uma live do YouTube'
+        : 'Nenhuma live detectada nesta aba (se for live, espere o anúncio acabar)';
       el.className = 'status';
+      showDiag(d);
       setButtons(false);
     }
   } catch (e) {
-    el.textContent = 'Abra uma live do YouTube';
+    // Sem resposta: o content script não está nesta aba.
+    const tab = await chrome.tabs.get(tabId).catch(() => null);
+    el.textContent = tab && /^https:\/\/www\.youtube\.com\//.test(tab.url || '')
+      ? 'A extensão ainda não está nesta aba: aperte F5 na live'
+      : 'Abra uma live do YouTube';
     el.className = 'status';
+    showDiag(null);
     setButtons(false);
   }
+}
+
+function showDiag(d) {
+  const el = $('diag');
+  if (!el) return;
+  if (!d) { el.hidden = true; return; }
+  el.hidden = false;
+  el.textContent = `página ${d.page} · player ${d.player ? 'sim' : 'não'} · vídeo ${d.video ? 'sim' : 'não'}`
+    + ` · selo ao vivo ${d.badge} · ytp-live ${d.ytpLive ? 'sim' : 'não'}`
+    + ` · meta live ${d.meta ? 'sim' : 'não'}${d.endDate ? ' (encerrada)' : ''} · duração ${d.duration}`;
 }
 
 function setButtons(on) {

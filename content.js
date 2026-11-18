@@ -788,6 +788,25 @@
       chunksVideo: s ? currentEpochChunks(s).length : 0,
       adShowing: isAd(getPlayer()),
       hidden: document.hidden,
+      detect: detectInfo(),
+    };
+  }
+
+  // Diagnóstico da detecção de live, para o popup explicar por que não está gravando.
+  function detectInfo() {
+    const player = getPlayer();
+    const badge = player && player.querySelector('.ytp-live-badge');
+    const video = getVideo();
+    return {
+      page: pageKey() || location.pathname,
+      player: !!player,
+      video: !!video,
+      badge: badge ? getComputedStyle(badge).display : 'ausente',
+      ytpLive: !!player && player.classList.contains('ytp-live'),
+      meta: !!document.querySelector('meta[itemprop="isLiveBroadcast"]'),
+      endDate: !!document.querySelector('meta[itemprop="endDate"]'),
+      duration: video ? String(video.duration) : null,
+      live: isLive(player),
     };
   }
 
@@ -1002,7 +1021,7 @@
   // ---------- Mensagens ----------
 
   chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
-    if (!msg || typeof msg !== 'object') return false;
+    if (dead || !msg || typeof msg !== 'object') return false;
     if (msg.type === 'status') {
       sendResponse(statusOf(session));
       return false;
@@ -1019,6 +1038,12 @@
   function onNavigate() {
     setTimeout(check, 300);
   }
+
+  // Se outra cópia deste script já roda neste mundo (injeção ao recarregar a extensão), desliga ela.
+  if (typeof globalThis.__clipLiveTeardown === 'function') {
+    try { globalThis.__clipLiveTeardown(); } catch (e) { /* nada */ }
+  }
+  globalThis.__clipLiveTeardown = teardown;
 
   if (checkSupport()) {
     document.addEventListener('yt-navigate-finish', onNavigate);

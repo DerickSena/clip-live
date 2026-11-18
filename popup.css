@@ -57,3 +57,11 @@ ul { margin: 0 0 6px; padding: 0; list-style: none; }
 li { display: flex; justify-content: space-between; gap: 8px; padding: 2px 0; }
 kbd { font: 12px ui-monospace, Consolas, monospace; color: var(--muted); }
 a { color: var(--accent); }
+
+.diag {
+  margin: -4px 0 10px;
+  font-size: 10px;
+  line-height: 1.4;
+  opacity: 0.6;
+  word-break: break-word;
+}

@@ -113,7 +113,7 @@ chrome.runtime.onInstalled.addListener(async () => {
         await chrome.scripting.insertCSS({ target: { tabId: tab.id }, files: ['content.css'] });
         await chrome.scripting.executeScript({
           target: { tabId: tab.id },
-          files: ['lib/mediabunny.min.cjs', 'mux.js', 'content.js'],
+          files: ['lib/mediabunny.min.js', 'mux.js', 'content.js'],
         });
         console.log(TAG, 'injetado na aba aberta', tab.id);
       } catch (e) {

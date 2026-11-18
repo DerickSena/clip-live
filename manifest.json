@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Clip Live",
-  "version": "1.0.1",
+  "version": "1.0.2",
   "description": "Replay buffer de lives do YouTube: grava os últimos segundos e salva um clipe de 30s ou 1min num clique.",
   "minimum_chrome_version": "116",
   "permissions": [
@@ -17,7 +17,7 @@
         "https://www.youtube.com/*"
       ],
       "js": [
-        "lib/mediabunny.min.cjs",
+        "lib/mediabunny.min.js",
         "mux.js",
         "content.js"
       ],

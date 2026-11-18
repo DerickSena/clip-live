@@ -50,7 +50,7 @@ npm install mediabunny@latest
 npm run vendor
 ```
 
-O `vendor` copia `mediabunny.min.cjs` e a licença (MPL-2.0) para `lib/`. Depois, recarregue a extensão em `vivaldi://extensions`.
+O `vendor` copia `mediabunny.min.cjs` (com o nome `mediabunny.min.js`, porque o navegador só aceita .js em content script) e a licença (MPL-2.0) para `lib/`. Depois, recarregue a extensão em `vivaldi://extensions`.
 
 Para conferir a montagem do MP4 sem navegador (precisa de `ffmpeg` e `ffprobe` no PATH):
 

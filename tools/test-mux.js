@@ -51,6 +51,7 @@ async function runCase(dir, name, src, video, audio, seconds, expect) {
   const buf = await buildMp4(MB, {
     video: sel.video, audio: sel.audio,
     videoConfig: src.videoConfig, audioConfig: src.audioConfig, audioCodec: 'aac',
+    tags: expect.tags,
   });
   const out = path.join(dir, name + '.mp4');
   fs.writeFileSync(out, Buffer.from(buf));
@@ -86,6 +87,18 @@ async function runCase(dir, name, src, video, audio, seconds, expect) {
   // Áudio acompanha o vídeo (sem sair "colado" e mais curto).
   assert(a && Math.abs(Number(a.duration) - Number(v.duration)) < 0.1, `áudio ${a && a.duration}s difere do vídeo ${v.duration}s`);
   if (expect.minAudio) assert(a && Number(a.nb_frames) >= expect.minAudio, `áudio ${a && a.nb_frames} < ${expect.minAudio}`);
+  // Metadados: a origem do clipe vai no comment ("clip-live:" + JSON), o título e a data.
+  if (expect.tags) {
+    const tags = JSON.parse(execFileSync('ffprobe', ['-v', 'error', '-show_entries', 'format_tags',
+      '-of', 'json', out]).toString()).format.tags || {};
+    assert(tags.title === expect.tags.title, `title ${JSON.stringify(tags.title)}`);
+    assert(typeof tags.comment === 'string' && tags.comment.startsWith('clip-live:'), `comment ${JSON.stringify(tags.comment)}`);
+    let info = null;
+    try { info = JSON.parse(tags.comment.slice('clip-live:'.length)); } catch (e) { /* conferido abaixo */ }
+    assert(info && info.origem === 'clip-live' && info.canal === 'Canal', 'JSON do comment inválido');
+    assert(!!tags.date, 'sem date');
+    console.log(`  tags: title=${tags.title} | date=${tags.date} | comment=${(tags.comment || '').slice(0, 60)}...`);
+  }
   // Timestamps estritamente crescentes por track.
   for (const list of [sel.video, sel.audio]) {
     for (let i = 1; i < list.length; i++) {
@@ -103,7 +116,12 @@ async function runCase(dir, name, src, video, audio, seconds, expect) {
   console.log(`origem: ${src.video.length} frames, ${src.audio.length} pacotes de áudio; saída em ${dir}`);
 
   // 1) Normal: últimos 5 s começam no keyframe de 2 s, então o clipe tem 6 s.
-  await runCase(dir, 'normal', src, src.video, src.audio, 5, { frames: 180, duration: 6, minAudio: 270 });
+  const origem = {
+    url: 'https://kick.com/canal', titulo: 'Título "com aspas" e acentuação', canal: 'Canal', plataforma: 'kick',
+    inicio: null, fim: null, baixado_em: '2026-11-19T12:00:00', origem: 'clip-live', auto: true, motivo: '14 risadas em 10 s',
+  };
+  const tags = { title: `${origem.canal} - ${origem.titulo}`, comment: 'clip-live:' + JSON.stringify(origem), date: new Date() };
+  await runCase(dir, 'normal', src, src.video, src.audio, 5, { frames: 180, duration: 6, minAudio: 270, tags });
 
   // 2) Buraco de 20 s aos 3 s (anúncio/pausa): o buraco vira um frame e o clipe fica igual ao normal.
   const shift = (r) => Object.assign({}, r, { timestamp: r.timestamp + 20e6 });

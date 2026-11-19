@@ -23,12 +23,14 @@ async function refreshStatus() {
     el.textContent = 'Desligada: não está gravando nem usando o processador';
     el.className = 'status';
     showDiag(null);
+    showSom(null);
     setButtons(false);
     return;
   }
   try {
     const st = await chrome.tabs.sendMessage(tabId, { type: 'status' });
     refreshAuto(st).catch(() => {});
+    showSom(st && !st.error ? st : null);
     if (st && st.error) {
       el.textContent = st.error;
       el.className = 'status';
@@ -37,7 +39,9 @@ async function refreshStatus() {
       // framesIn parado entre duas consultas com a aba escondida = vídeo congelado.
       const stalled = lastFramesIn !== null && st.framesIn === lastFramesIn;
       lastFramesIn = st.framesIn;
-      const res = st.width ? `, ${st.width}x${st.height}` : '';
+      const res = st.width
+        ? `, encoder ${st.width}x${st.height}${st.qualidadeFonte ? ` (fonte ${st.qualidadeFonte})` : ''}`
+        : '';
       if (st.adShowing) el.textContent = `Esperando o anúncio acabar (${st.seconds}s no buffer)`;
       else if (st.hidden && stalled) el.textContent = 'Aba em segundo plano: o navegador pode pausar o vídeo';
       else el.textContent = `Gravando: ${st.seconds}s no buffer${res}`;
@@ -62,8 +66,24 @@ async function refreshStatus() {
       : 'Abra uma live do YouTube, Twitch ou Kick';
     el.className = 'status';
     showDiag(null);
+    showSom(null);
     setButtons(false);
   }
+}
+
+// Linha do som e da qualidade: vigia do áudio e aviso de qualidade (ex.: 1080p60 da Kick só com login).
+function showSom(st) {
+  const el = $('som');
+  if (!el) return;
+  if (!st || !st.recording) { el.hidden = true; return; }
+  el.hidden = false;
+  const partes = [];
+  if (st.audioProblema) partes.push(`Som: ${st.audioProblema}`);
+  else partes.push(st.audioOk ? 'Som: ok' : 'Som: esperando o áudio');
+  if (st.audioReinicios) partes.push(`${st.audioReinicios} conserto(s) do som na última hora`);
+  if (st.qualidadeAviso) partes.push(st.qualidadeAviso);
+  el.textContent = partes.join(' · ');
+  el.className = st.audioOk && !st.qualidadeAviso ? 'auto' : 'auto warn';
 }
 
 function showDiag(d) {

@@ -69,13 +69,13 @@ const SITE_ORIGINS = ['https://www.youtube.com', 'https://www.twitch.tv', 'https
 const SITE_PATTERNS = SITE_ORIGINS.map((o) => o + '/*');
 
 // Só aceita pedido de download vindo desta extensão, com blob de um dos 3 sites (o mesmo da aba)
-// e nome esperado: clip-live/<nome>.mp4 ou .json, sem ".." e sem outra subpasta.
+// e nome esperado: clip-live/<nome>.mp4, sem ".." e sem outra subpasta (a origem vai dentro do MP4).
 function validDownload(msg, sender) {
   if (sender.id !== chrome.runtime.id || !sender.tab) return false;
   if (typeof msg.url !== 'string' || typeof msg.filename !== 'string') return false;
   const origin = SITE_ORIGINS.find((o) => msg.url.startsWith('blob:' + o + '/'));
   if (!origin || sender.origin !== origin) return false;
-  return msg.filename.startsWith('clip-live/') && /\.(mp4|json)$/.test(msg.filename)
+  return msg.filename.startsWith('clip-live/') && /\.mp4$/.test(msg.filename)
     && !msg.filename.includes('..') && !msg.filename.slice('clip-live/'.length).includes('/');
 }
 
@@ -140,6 +140,12 @@ chrome.runtime.onInstalled.addListener(async (details) => {
           target: { tabId: tab.id },
           files: ['lib/mediabunny.min.js', 'mux.js', 'content.js'],
         });
+        // YouTube: o pedido de qualidade roda no mundo da página (API do player).
+        if ((tab.url || '').startsWith('https://www.youtube.com/')) {
+          await chrome.scripting.executeScript({
+            target: { tabId: tab.id }, files: ['youtube-quality.js'], world: 'MAIN',
+          }).catch((e) => console.warn(TAG, 'não deu para injetar a qualidade do YouTube', tab.id, e));
+        }
         console.log(TAG, 'injetado na aba aberta', tab.id);
       } catch (e) {
         console.warn(TAG, 'não deu para injetar na aba', tab.id, e);

@@ -25,7 +25,11 @@
     pausa_s: 120, // pausa entre disparos
     max_hora: 12, // máximo de clipes automáticos por hora nesta aba
   };
-  const LAUGH_RE = /k{3,}|(?:ha){2,}|(?:he){3,}|(?:hue){2,}|(?:rs){2,}|(?:ks){2,}|(?:ka){2,}|\blmao\b|\blul\b|\bkekw\b|\bomegalul\b|\bicant\b|😂|🤣|💀|!clip\b/u;
+  // Testada em text.toLowerCase() da mensagem inteira (teste: tools/test-risada.js). "lol" só conta
+  // sozinho na mensagem ou alongado/repetido (lool, loll, lollol, "lol lol"): "bora de lol" é o jogo.
+  // Inglês: lmaooo, lmfao, rofl, xd/xddd (só a palavra inteira), jajaja (3 vezes ou mais: "jaja" em
+  // português costuma ser "já já") e os emotes kekl, lulw e pepelaugh.
+  const LAUGH_RE = /k{3,}|(?:ha){2,}|(?:he){3,}|(?:hue){2,}|(?:rs){2,}|(?:ks){2,}|(?:ka){2,}|(?:ja){3,}|^\W*lo+l+\W*$|\blo{2,}l+\b|\blol{2,}\b|(?:lol){2,}|\blol\W+lol\b|\blma+o+\b|\blmfa+o+\b|\brofl\b|\bx+d+\b|\blul\b|\blulw\b|\bkekw\b|\bkekl\b|\bomegalul\b|\bpepelaugh\b|\bicant\b|😂|🤣|💀|😆|😹|!clip\b/u;
   const HEARTBEAT_MS = 10_000;
   const CHAT_FLUSH_MS = 300;
   const ID_RE = /^(yt:[A-Za-z0-9_-]{6,20}|tw:[a-z0-9_]{2,25}|kick:[a-z0-9_-]{2,40})$/;
@@ -47,6 +51,24 @@
   const TOAST_MS = 3000;
   const REVOKE_MS = 5 * 60_000;
   const TAG = '[clip-live]';
+
+  // Vigia do áudio (ver audioWatch).
+  const AUDIO_STALL_MS = 6000; // vídeo entrando e áudio parado por 6 s numa aba com som
+  const AUDIO_NO_TRACK_MS = 8000; // sessão sem nenhum áudio depois de 8 s
+  const AUDIO_DROP_MS = 4000; // descarte (repetido ou fila cheia) subindo sem parar por 4 s
+  const AUDIO_BEHIND_US = 5_000_000; // último pacote de áudio 5 s atrás do último frame de vídeo (o AAC do Windows segura muitos itens)
+  const AUDIO_GRACE_MS = 8000; // depois de uma ação, espera 8 s antes de julgar de novo
+  const AUDIO_FIX_WINDOW_MS = 5 * 60_000;
+  const AUDIO_FIX_MAX = 4; // no máximo 4 ações a cada 5 min; passou disso, desiste
+  const AUDIO_PROBLEM_TTL_MS = 2 * 60_000; // o último problema some depois de 2 min sem problema
+  const AUDIO_GIVE_UP = 'Não consegui recuperar o som: aperte F5 na aba';
+
+  // Qualidade na Kick (ver kickQualityTick).
+  const KICK_Q_PERIOD_MS = 30 * 60_000; // qualidade maior presa no login: confere no máximo 1 vez a cada 30 min
+  const KICK_Q_USER_MS = 15_000; // tecla, clique ou rolagem do usuário nos últimos 15 s: não abre o menu
+  const KICK_Q_RETRY_MS = 60_000; // queda ou falha (botão/menu não achado): no máximo 1 vez por minuto
+  const KICK_Q_LOW_MS = 6000; // a fonte abaixo da escolhida por 6 s conta como queda
+  const KICK_Q_LOGIN = /login|obrigat[oó]rio|required|entrar|sign\s*in/i; // opção presa no login
 
   const log = (...a) => console.log(TAG, ...a);
   const warn = (...a) => console.warn(TAG, ...a);
@@ -315,6 +337,7 @@
       }
       const key = pageKey();
       const live = fatalError ? false : checkRecording(key);
+      syncQualityFlag(live && !!session);
       autoTick(key, live);
     } catch (e) {
       warn('erro na checagem', e);
@@ -358,6 +381,10 @@
     if (session) {
       ensureControls(player);
       diagnose(session);
+      kickQualityTick(session);
+      audioWatch(session);
+      // Depois do vigia (ele zera o aviso do áudio quando a live muda).
+      if (session) guardVolume(session);
     }
     return true;
   }
@@ -383,6 +410,9 @@
     chatStop();
     document.removeEventListener('yt-navigate-finish', onNavigate);
     try { chrome.storage.onChanged.removeListener(onStorageChange); } catch (e) { /* runtime já morto */ }
+    syncQualityFlag(false);
+    unguardVolume();
+    for (const t of ['keydown', 'pointerdown', 'wheel']) window.removeEventListener(t, onUserInput, { capture: true });
     removeControls();
     if (toastEl) toastEl.remove();
   }
@@ -394,7 +424,7 @@
     s.lastDiag = now;
     const st = statusOf(s);
     const keys = ['seconds', 'framesIn', 'framesAd', 'framesPaused', 'framesDropped', 'chunksVideo',
-      'audioIn', 'audioInSec', 'audioDropDup', 'audioDropQueue', 'audioDropAd', 'audioDropPaused',
+      'audioIn', 'audioInSec', 'audioFed', 'audioDropDup', 'audioDropQueue', 'audioDropAd', 'audioDropPaused',
       'audioChunksOut', 'audioOutSec', 'audioLagMs', 'adShowing', 'hidden'];
     log('diag ' + keys.map((k) => `${k}=${st[k]}`).join(' ') + (s.error ? ' erro=' + s.error : ''));
   }
@@ -443,6 +473,13 @@
       audioDropPaused: 0,
       audioChunksOut: 0,
       audioOutSec: 0,
+      audioFed: 0, // pacotes entregues ao AudioEncoder
+      hadAudio: false, // esta aba já mandou áudio (nesta sessão ou na anterior)
+      audioNoCodec: false,
+      wd: null, // estado do vigia do áudio
+      testeSemAudio: false, // só teste: track de áudio parada de propósito
+      encoderTravado: null, // só teste: AudioEncoder cuja saída é ignorada
+      testeAtraso: false, // só teste: pacotes de áudio entram no buffer 8 s depois
       lastAudioInTs: 0,
       lastAudioOutTs: 0,
       lastDiag: performance.now(),
@@ -491,6 +528,7 @@
         aDecoderConfig: k.aDecoderConfig,
         aCodec: k.aCodec,
         anchor: k.anchor,
+        hadAudio: k.hadAudio || k.audioIn > 0,
         // O encoder novo pode continuar a mesma época se o decoderConfig sair igual.
         mergeFrom: k.epoch,
       });
@@ -582,6 +620,8 @@
     } catch (e) {
       if (!s.stopped) warn(`leitor de ${kind} falhou`, e);
     }
+    // Teste "parar-track": o áudio some sem aviso, quem tem de perceber é o vigia do áudio.
+    if (kind === 'audio' && s.testeSemAudio) return;
     if (!s.stopped) scheduleRestart(`leitor de ${kind} acabou`);
   }
 
@@ -872,6 +912,7 @@
       const ts = data.timestamp + s.timing.offsets.audio;
       s.aTimeline.push(ts, data.numberOfFrames);
       s.lastAudioInTs = ts;
+      s.audioFed++;
       enc.encode(data);
     } catch (e) {
       warn('erro ao codificar áudio', e);
@@ -906,6 +947,7 @@
       const picked = await pickAudioConfig(sampleRate, channels);
       if (s.stopped) return;
       s.aKey = `${sampleRate}/${channels}`;
+      s.audioNoCodec = !picked;
       if (!picked) {
         warn(`nenhum codec de áudio suportado (${s.aKey}); clipes sairão sem som`);
         return;
@@ -933,6 +975,8 @@
 
   function onAudioChunk(s, enc, chunk, meta) {
     if (s.stopped || enc !== s.aenc) return;
+    // Teste "travar-encoder": a saída deste encoder some, como se ele tivesse travado.
+    if (enc === s.encoderTravado) return;
     if (meta && meta.decoderConfig) {
       if (s.aDecoderConfig && !sameConfig(meta.decoderConfig, s.aDecoderConfig)) {
         log('formato do áudio mudou: descartando o áudio antigo do buffer');
@@ -951,7 +995,13 @@
     s.audioChunksOut++;
     s.audioOutSec += t.duration / 1e6;
     s.lastAudioOutTs = t.timestamp;
-    s.audioChunks.push({ chunk, timestamp: t.timestamp, duration: t.duration });
+    const item = { chunk, timestamp: t.timestamp, duration: t.duration };
+    // Teste "atrasar-audio": os pacotes entram no buffer 8 s depois (áudio atrás do vídeo).
+    if (s.testeAtraso) {
+      setTimeout(() => { if (!s.stopped) s.audioChunks.push(item); }, 8000);
+      return;
+    }
+    s.audioChunks.push(item);
     // Corte sempre (aba escondida com vídeo parado não pode fazer o áudio crescer).
     // Conta tempo de conteúdo (nº de pacotes x duração), e não de relógio: assim uma pausa
     // longa não apaga o áudio que ainda acompanha o vídeo de antes da pausa.
@@ -1031,6 +1081,12 @@
       // Último timestamp de entrada (rebaseado) menos o último de saída: atraso do encoder.
       audioLagMs: s && s.audioChunksOut ? Math.round((s.lastAudioInTs - s.lastAudioOutTs) / 1000) : 0,
       chunksVideo: s ? currentEpochChunks(s).length : 0,
+      audioFed: s ? s.audioFed : 0,
+      audioOk: audioOk(s),
+      audioProblema: audioProblem(),
+      audioReinicios: audioFixesLastHour(),
+      qualidadeFonte: sourceQuality(),
+      qualidadeAviso: kq.aviso,
       adShowing: isAd(getPlayer()),
       hidden: document.hidden,
       enabled,
@@ -1057,9 +1113,461 @@
     };
   }
 
+  // ---------- Qualidade da fonte ----------
+
+  const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+  // Tamanho do vídeo no player (a fonte), ex.: "1280x720".
+  function sourceQuality() {
+    const v = (session && session.video) || getVideo();
+    return v && v.videoWidth ? `${v.videoWidth}x${v.videoHeight}` : null;
+  }
+
+  // YouTube: o pedido de qualidade roda no mundo da página (youtube-quality.js) e só age
+  // enquanto esta aba grava. O sinal entre os dois mundos é um atributo no <html>.
+  let qualityFlag = false;
+  function syncQualityFlag(rec) {
+    if (SITE !== YOUTUBE || rec === qualityFlag) return;
+    qualityFlag = rec;
+    const html = document.documentElement;
+    if (rec) {
+      html.setAttribute('data-clip-live', 'gravando');
+      document.dispatchEvent(new CustomEvent('clip-live-qualidade'));
+    } else {
+      html.removeAttribute('data-clip-live');
+    }
+  }
+
+  // Kick: o player não tem API. Abre o menu "Qualidade" (Radix, abre com pointerdown), escolhe a
+  // maior resolução livre (sem login, o 1080p60 vem com "O login é obrigatório") e fecha.
+  // Faz isso quando a gravação começa e depois só quando precisa: a fonte caiu abaixo da escolhida
+  // por 6 s (no máximo 1 vez por minuto), ou a cada 30 min se existe uma qualidade maior presa no
+  // login. Nunca a cada poucos segundos, e nunca com o usuário mexendo na página (foco num campo,
+  // tecla, clique ou rolagem nos últimos 15 s) ou com outro menu aberto.
+  const kq = {
+    video: null, key: '', busy: false, lastTry: 0, tries: 0, chosenH: 0, lowSince: 0, blockedHigher: false,
+    aviso: null, lastSkipLog: 0,
+  };
+  let lastUserInput = 0;
+  const onUserInput = (e) => {
+    if (e.isTrusted) lastUserInput = Date.now();
+  };
+  if (SITE === KICK) {
+    for (const t of ['keydown', 'pointerdown', 'wheel']) window.addEventListener(t, onUserInput, { capture: true, passive: true });
+  }
+
+  // O usuário está mexendo na página: a rodada do menu fica para depois.
+  function userBusy() {
+    if (Date.now() - lastUserInput < KICK_Q_USER_MS) return 'o usuário mexeu na página há pouco';
+    const a = document.activeElement;
+    // Aba escondida: ninguém está digitando, mesmo com o foco largado no chat.
+    if (!document.hidden && a && (a.tagName === 'INPUT' || a.tagName === 'TEXTAREA' || a.isContentEditable)) return 'foco num campo de texto';
+    // Só conta menu visível (a Kick pode deixar listas escondidas no DOM, como a de emotes).
+    if ([...document.querySelectorAll('[role="menu"], [role="listbox"]')].some(visible)) return 'já tem um menu aberto';
+    return '';
+  }
+
+  function kickQualityTick(s) {
+    if (SITE !== KICK || kq.busy || !s || s.stopped) return;
+    const v = s.video;
+    if (v !== kq.video || s.key !== kq.key) {
+      Object.assign(kq, {
+        video: v, key: s.key, lastTry: 0, tries: 0, chosenH: 0, lowSince: 0, aviso: null, blockedHigher: false,
+      });
+    }
+    if (isStalled(v) || !v.videoHeight) return;
+    const now = Date.now();
+    let why = '';
+    if (!kq.chosenH) {
+      if (!kq.tries || now - kq.lastTry >= KICK_Q_RETRY_MS) why = 'gravação começou';
+    } else {
+      if (v.videoHeight < kq.chosenH) kq.lowSince = kq.lowSince || now;
+      else kq.lowSince = 0;
+      // Queda: no máximo 1 vez por minuto. Conferir o login: no máximo 1 vez a cada 30 min.
+      if (kq.lowSince && now - kq.lowSince >= KICK_Q_LOW_MS && now - kq.lastTry >= KICK_Q_RETRY_MS) {
+        why = `a fonte caiu para ${v.videoHeight}p`;
+      } else if (kq.blockedHigher && now - kq.lastTry >= KICK_Q_PERIOD_MS) {
+        why = 'conferindo se a qualidade maior foi liberada';
+      }
+    }
+    if (!why) return;
+    const busy = userBusy();
+    if (busy) {
+      if (now - kq.lastSkipLog >= 60_000) {
+        kq.lastSkipLog = now;
+        log(`qualidade da Kick (${why}): fica para depois (${busy})`);
+      }
+      return;
+    }
+    kickPickQuality(v, why).catch((e) => warn('qualidade da Kick: falhou', e));
+  }
+
+  // Lê "720p60" -> { h: 720, fps: 60 }. Só texto de login (ex.: "O login é obrigatório") marca a
+  // opção como bloqueada; outro rótulo (ex.: "Source", "Fonte") é opção válida.
+  function parseKickOption(el) {
+    const text = (el.textContent || '').trim();
+    const m = text.match(/^(\d+)p(\d*)/);
+    if (!m) return null;
+    return {
+      el, label: m[0], h: Number(m[1]), fps: Number(m[2] || 30),
+      blocked: KICK_Q_LOGIN.test(text.slice(m[0].length)), checked: el.getAttribute('aria-checked') === 'true',
+    };
+  }
+
+  async function kickPickQuality(v, why) {
+    kq.busy = true;
+    kq.lastTry = Date.now();
+    kq.tries++;
+    let opened = false;
+    try {
+      // O botão só aparece com o mouse em cima do vídeo.
+      const r = v.getBoundingClientRect();
+      const at = { bubbles: true, clientX: r.x + r.width / 2, clientY: r.y + r.height / 2 };
+      v.dispatchEvent(new MouseEvent('mousemove', at));
+      v.dispatchEvent(new MouseEvent('mouseover', at));
+      await sleep(500);
+      const btn = [...document.querySelectorAll('button[aria-label]')]
+        .find((b) => /^(qualidade|quality)$/i.test(b.getAttribute('aria-label').trim()));
+      if (!btn) {
+        log(`qualidade da Kick (${why}): botão "Qualidade" não achado, tento de novo em 1 min`);
+        return;
+      }
+      btn.dispatchEvent(new PointerEvent('pointerdown', {
+        bubbles: true, cancelable: true, pointerType: 'mouse', button: 0, isPrimary: true,
+      }));
+      opened = true;
+      let opts = [];
+      for (let i = 0; i < 10 && !opts.length; i++) {
+        await sleep(150);
+        opts = [...document.querySelectorAll('[role="menuitemradio"]')].map(parseKickOption).filter(Boolean);
+      }
+      if (!opts.length) {
+        log(`qualidade da Kick (${why}): o menu não abriu, tento de novo em 1 min`);
+        return;
+      }
+      const byBest = (a, b) => b.h - a.h || b.fps - a.fps;
+      opts.sort(byBest);
+      const free = opts.filter((o) => !o.blocked);
+      const top = opts[0];
+      kq.aviso = top.blocked ? `${top.label} na Kick só com login (faça login na Kick no navegador)` : null;
+      if (!free.length) {
+        log(`qualidade da Kick (${why}): nenhuma opção livre`, opts.map((o) => o.el.textContent.trim()).join(' | '));
+        return;
+      }
+      const best = free[0];
+      kq.blockedHigher = opts.some((o) => o.blocked && byBest(o, best) < 0);
+      kq.chosenH = best.h;
+      kq.lowSince = 0;
+      if (best.checked) {
+        log(`qualidade da Kick (${why}): já está em ${best.label} (fonte ${v.videoWidth}x${v.videoHeight})`);
+      } else {
+        best.el.click();
+        log(`qualidade da Kick (${why}): escolhida ${best.label} (fonte era ${v.videoWidth}x${v.videoHeight})`
+          + (kq.aviso ? ` · ${kq.aviso}` : ''));
+      }
+    } finally {
+      // Fecha o menu se ele continua aberto (escolher uma opção já fecha).
+      if (opened) {
+        await sleep(200);
+        if (document.querySelector('[role="menuitemradio"]')) {
+          const esc = { key: 'Escape', code: 'Escape', keyCode: 27, which: 27, bubbles: true, cancelable: true };
+          (document.activeElement || document.body).dispatchEvent(new KeyboardEvent('keydown', esc));
+        }
+      }
+      kq.busy = false;
+    }
+  }
+
+  // ---------- Volume 0 vira mudo ----------
+  // O captureStream respeita o volume do player (volume 0 = clipe em silêncio), mas não o mudo.
+  // Enquanto grava, volume 0 vira mudo com o volume de volta ao último valor (ou 0,5): quem assiste
+  // continua sem som e o clipe sai com áudio. Se o player brigar, no máximo 3 trocas por minuto.
+  const VOLUME_MSG = 'O volume do player estava em 0: troquei por mudo para o clipe sair com som. Para silenciar uma live, use o mudo (m), não o volume.';
+  const VOLUME_FIX_MAX = 3;
+  const volFix = { video: null, handler: null, timer: null, last: 0.5, times: [], warned: 0, stopped: false };
+
+  function guardVolume(s) {
+    const v = s.video;
+    if (volFix.video !== v) {
+      unguardVolume();
+      volFix.video = v;
+      // Vídeo novo: a parada por briga do player valia só para o vídeo anterior.
+      volFix.stopped = false;
+      volFix.warned = 0;
+      volFix.times = [];
+      // Espera o player assentar: logo depois da troca ele reaplica o próprio volume.
+      volFix.handler = () => {
+        if (v.volume > 0) fixVolume(v); // guarda o volume e, se estava parado, volta a vigiar
+        else if (!volFix.timer) {
+          volFix.timer = setTimeout(() => {
+            volFix.timer = null;
+            if (session && session.video === v && !session.stopped) fixVolume(v);
+          }, 700);
+        }
+      };
+      v.addEventListener('volumechange', volFix.handler);
+    }
+    fixVolume(v);
+  }
+
+  function unguardVolume() {
+    clearTimeout(volFix.timer);
+    volFix.timer = null;
+    if (volFix.video && volFix.handler) volFix.video.removeEventListener('volumechange', volFix.handler);
+    volFix.video = null;
+    volFix.handler = null;
+  }
+
+  // O aviso do volume não cobre o "aperte F5" do vigia do áudio.
+  function setVolumeProblem(msg, now) {
+    if (audioWd.giveUp) return;
+    audioWd.problem = msg;
+    audioWd.problemAt = now;
+  }
+
+  function fixVolume(v) {
+    if (v.volume > 0) {
+      volFix.last = v.volume;
+      // O volume subiu por conta própria: volta a trocar 0 por mudo se precisar.
+      // (Parado, a extensão não mexe no volume: quem subiu foi o usuário ou o player.)
+      if (volFix.stopped) {
+        log('volume: subiu de novo, volto a vigiar o volume 0');
+        volFix.stopped = false;
+        volFix.times = [];
+      }
+      return;
+    }
+    const now = Date.now();
+    volFix.times = volFix.times.filter((t) => now - t < 60_000);
+    if (!volFix.stopped && volFix.times.length >= VOLUME_FIX_MAX) {
+      volFix.stopped = true;
+      warn('volume: o player voltou o volume para 0 três vezes em 1 min; parei de trocar por mudo até o volume subir');
+    }
+    if (volFix.stopped) {
+      // O player volta o volume para 0 sozinho: não briga mais, só avisa (1 vez por minuto).
+      if (now - volFix.warned >= 60_000) {
+        volFix.warned = now;
+        setVolumeProblem('O player voltou o volume para 0 várias vezes: o clipe pode sair sem som. Suba o volume e use o mudo (m).', now);
+      }
+      return;
+    }
+    volFix.times.push(now);
+    const vol = volFix.last > 0 ? volFix.last : 0.5;
+    v.muted = true;
+    v.volume = vol;
+    setVolumeProblem(VOLUME_MSG, now);
+    warn(`volume: o player estava em 0, troquei por mudo com volume ${vol} (o captureStream grava silêncio com volume 0)`);
+  }
+
+  // ---------- Vigia do áudio ----------
+  // Um corte da Kick já saiu sem nenhuma faixa de áudio, sem causa achada. O vigia confere a cada
+  // 2 s (só gravando, fora de anúncio, com o vídeo andando) e conserta sozinho, deixando rastro no
+  // console e no batimento para o painel. No máximo 4 ações a cada 5 min; depois desiste e avisa.
+
+  const audioWd = { key: '', fixes: [], hour: [], problem: null, problemAt: 0, giveUp: false };
+
+  // A aba tem som: a sessão (ou a anterior, num reinício) já recebeu áudio, ou o player está
+  // decodificando áudio agora (webkitAudioDecodedByteCount subindo).
+  function tabHasSound(s) {
+    if (!s) return false;
+    return s.hadAudio || s.audioIn > 0 || !!(s.wd && performance.now() - s.wd.webkitRoseAt < 10_000);
+  }
+
+  function audioProblem() {
+    if (!audioWd.problem) return null;
+    if (!audioWd.giveUp && Date.now() - audioWd.problemAt > AUDIO_PROBLEM_TTL_MS) {
+      audioWd.problem = null;
+      return null;
+    }
+    return audioWd.problem;
+  }
+
+  function audioFixesLastHour() {
+    audioWd.hour = lastHour(audioWd.hour, Date.now());
+    return audioWd.hour.length;
+  }
+
+  // Som em ordem: gravando, sem problema ativo agora e com áudio saindo do encoder (ou aba sem som).
+  function audioOk(s) {
+    if (!s || s.error || s.stopped || audioWd.giveUp) return false;
+    if (s.wd && s.wd.alert) return false;
+    return s.audioChunksOut > 0 || !tabHasSound(s);
+  }
+
+  function audioCounters(s) {
+    const st = statusOf(s);
+    return ['framesIn', 'framesPaused', 'audioIn', 'audioInSec', 'audioFed', 'audioChunksOut', 'audioOutSec',
+      'audioDropDup', 'audioDropQueue', 'audioDropAd', 'audioDropPaused', 'audioLagMs', 'hidden']
+      .map((k) => `${k}=${st[k]}`).join(' ');
+  }
+
+  // Fecha e recria só o AudioEncoder (o próximo pacote de áudio configura de novo).
+  function resetAudioEncoder(s) {
+    closeCoder(s.aenc);
+    s.aenc = null;
+    s.aKey = '';
+    s.encoderTravado = null;
+  }
+
+  // acao: 'reiniciar' | 'reconfigurar'. Devolve false se desistiu (limite).
+  function audioAct(s, motivo, acao) {
+    const now = Date.now();
+    if (audioWd.giveUp) {
+      // Já desistiu: o aviso continua sendo o do F5.
+      audioWd.problem = AUDIO_GIVE_UP;
+      audioWd.problemAt = now;
+      return false;
+    }
+    audioWd.problem = motivo;
+    audioWd.problemAt = now;
+    audioWd.fixes = audioWd.fixes.filter((t) => now - t < AUDIO_FIX_WINDOW_MS);
+    if (audioWd.fixes.length >= AUDIO_FIX_MAX) {
+      audioWd.giveUp = true;
+      audioWd.problem = AUDIO_GIVE_UP;
+      warn(`vigia do áudio: ${motivo}; já foram ${AUDIO_FIX_MAX} tentativas em 5 min, parei de tentar. ${AUDIO_GIVE_UP} · ${audioCounters(s)}`);
+      toast(AUDIO_GIVE_UP, 8000);
+      return false;
+    }
+    audioWd.fixes.push(now);
+    audioWd.hour.push(now);
+    const texto = acao === 'reiniciar' ? 'reiniciando a gravação (o buffer fica)' : 'recriando o codificador de áudio';
+    warn(`vigia do áudio: ${motivo} · ação: ${texto} (${audioWd.fixes.length}/${AUDIO_FIX_MAX} em 5 min) · ${audioCounters(s)}`);
+    if (s.wd) {
+      s.wd.graceUntil = performance.now() + AUDIO_GRACE_MS;
+      clearAudioTimers(s.wd);
+    }
+    if (acao === 'reiniciar') scheduleRestart('vigia do áudio: ' + motivo);
+    else if (acao === 'reconfigurar') resetAudioEncoder(s);
+    return true;
+  }
+
+  function clearAudioTimers(wd) {
+    wd.noAudioSince = 0;
+    wd.stuckSince = 0;
+    wd.dupSince = 0;
+    wd.queueSince = 0;
+    wd.behindSince = 0;
+    wd.alert = false;
+  }
+
+  function audioWatch(s) {
+    if (!s || s.stopped || s.error || restartTimer) return;
+    const now = performance.now();
+    if (audioWd.key !== s.key) Object.assign(audioWd, { key: s.key, fixes: [], hour: [], problem: null, problemAt: 0, giveUp: false });
+    const v = s.video;
+    if (!s.wd) {
+      s.wd = {
+        startedAt: now, graceUntil: 0, webkit: -1, webkitRoseAt: -Infinity,
+        framesIn: s.framesIn, audioIn: s.audioIn, fed: s.audioFed, out: s.audioChunksOut,
+        dup: s.audioDropDup, queue: s.audioDropQueue, queueFixed: false, behindFixed: false,
+      };
+      clearAudioTimers(s.wd);
+      return;
+    }
+    const wd = s.wd;
+    const bytes = v.webkitAudioDecodedByteCount;
+    if (typeof bytes === 'number') {
+      if (wd.webkit >= 0 && bytes > wd.webkit) wd.webkitRoseAt = now;
+      wd.webkit = bytes;
+    }
+    const d = {
+      frames: s.framesIn - wd.framesIn,
+      audio: s.audioIn - wd.audioIn,
+      fed: s.audioFed - wd.fed,
+      out: s.audioChunksOut - wd.out,
+      dup: s.audioDropDup - wd.dup,
+      queue: s.audioDropQueue - wd.queue,
+    };
+    Object.assign(wd, {
+      framesIn: s.framesIn, audioIn: s.audioIn, fed: s.audioFed, out: s.audioChunksOut,
+      dup: s.audioDropDup, queue: s.audioDropQueue,
+    });
+    if (s.audioIn > 0) s.hadAudio = true;
+    // Anúncio, pausa, travada ou vídeo parado: nada a julgar (e os prazos recomeçam).
+    if (isAd(s.player) || isStalled(v) || d.frames <= 0 || now < wd.graceUntil) {
+      clearAudioTimers(wd);
+      return;
+    }
+    const since = (cur, on) => (on ? cur || now : 0);
+    const past = (t, ms) => !!t && now - t >= ms;
+    const sound = tabHasSound(s);
+
+    // (c) descarte subindo sem parar: repetido (timestamp para trás) ou fila do encoder cheia.
+    wd.dupSince = since(wd.dupSince, d.dup > 0);
+    wd.queueSince = since(wd.queueSince, d.queue > 0);
+    // (b) áudio entrando no encoder e nada saindo (ou o encoder sumiu/fechou).
+    const encDown = !!s.aKey && !s.aConfiguring && !s.audioNoCodec && (!s.aenc || s.aenc.state !== 'configured');
+    wd.stuckSince = since(wd.stuckSince, d.audio > 0 && d.out <= 0 && (d.fed > 0 || encDown));
+    // (d) o último pacote de áudio do buffer ficou mais de 5 s atrás do último frame de vídeo.
+    const lv = s.videoChunks[s.videoChunks.length - 1];
+    const la = s.audioChunks[s.audioChunks.length - 1];
+    const behind = !!lv && !!la && lv.timestamp - (la.timestamp + la.duration) > AUDIO_BEHIND_US;
+    wd.behindSince = since(wd.behindSince, d.audio > 0 && behind);
+    // (a) vídeo entrando e áudio parado numa aba que tem som (inclui sessão sem track de áudio).
+    wd.noAudioSince = since(wd.noAudioSince, sound && d.audio <= 0);
+    const noTrack = !s.stream.getAudioTracks().length;
+    wd.alert = past(wd.dupSince, 2000) || past(wd.queueSince, 2000) || past(wd.stuckSince, 4000)
+      || past(wd.behindSince, 4000) || past(wd.noAudioSince, 4000);
+
+    if (past(wd.noAudioSince, AUDIO_STALL_MS) && (s.audioIn > 0 || now - wd.startedAt >= AUDIO_NO_TRACK_MS)) {
+      const motivo = s.audioIn > 0
+        ? `o áudio parou de chegar (vídeo andando há ${Math.round((now - wd.noAudioSince) / 1000)} s sem áudio)`
+        : `sessão sem áudio depois de ${Math.round((now - wd.startedAt) / 1000)} s` + (noTrack ? ' (nenhuma track de áudio)' : '');
+      audioAct(s, motivo, 'reiniciar');
+    } else if (past(wd.queueSince, AUDIO_DROP_MS)) {
+      if (!wd.queueFixed) {
+        wd.queueFixed = true;
+        audioAct(s, 'fila do codificador de áudio cheia (audioDropQueue subindo)', 'reconfigurar');
+      } else {
+        audioAct(s, 'fila do codificador de áudio cheia de novo depois de recriar', 'reiniciar');
+      }
+    } else if (past(wd.dupSince, AUDIO_DROP_MS)) {
+      audioAct(s, 'áudio com timestamp repetido ou para trás (audioDropDup subindo)', 'reiniciar');
+    } else if (past(wd.stuckSince, AUDIO_STALL_MS)) {
+      audioAct(s, 'o codificador de áudio travou (áudio entrando, nada saindo)', 'reconfigurar');
+    } else if (past(wd.behindSince, AUDIO_STALL_MS)) {
+      const atras = (lv.timestamp - (la.timestamp + la.duration)) / 1e6;
+      if (!wd.behindFixed) {
+        wd.behindFixed = true;
+        audioAct(s, `o áudio do buffer ficou ${atras.toFixed(1)} s atrás do vídeo`, 'reconfigurar');
+      } else {
+        audioAct(s, `o áudio do buffer ficou ${atras.toFixed(1)} s atrás do vídeo de novo depois de recriar`, 'reiniciar');
+      }
+    } else if (audioWd.giveUp && !wd.alert && s.audioChunksOut > 0 && d.out > 0) {
+      // O som voltou sozinho depois de desistir: libera o vigia de novo.
+      log('vigia do áudio: o som voltou');
+      Object.assign(audioWd, { giveUp: false, fixes: [], problemAt: Date.now() });
+    }
+  }
+
+  // Só teste (mensagem "teste-audio" do service worker): provoca a falha para ver o vigia agir.
+  function testeAudio(acao) {
+    const s = session;
+    if (!s) return { ok: false, error: 'sem gravação nesta aba' };
+    if (acao === 'parar-track') {
+      const tracks = s.stream.getAudioTracks();
+      s.testeSemAudio = true;
+      tracks.forEach((t) => t.stop());
+      warn(`teste: ${tracks.length} track(s) de áudio parada(s); o vigia deve reiniciar em ~6 s`);
+      return { ok: true, acao, tracks: tracks.length };
+    }
+    if (acao === 'atrasar-audio') {
+      s.testeAtraso = true;
+      warn('teste: áudio do buffer atrasado em 8 s; o vigia deve recriar o encoder e depois reiniciar');
+      return { ok: true, acao };
+    }
+    if (acao === 'travar-encoder') {
+      if (!s.aenc) return { ok: false, error: 'sem AudioEncoder' };
+      s.encoderTravado = s.aenc;
+      warn('teste: saída do AudioEncoder ignorada; o vigia deve recriar o encoder em ~6 s');
+      return { ok: true, acao };
+    }
+    return { ok: false, error: 'ação desconhecida' };
+  }
+
   // ---------- Clipe ----------
 
-  // opts.auto = corte automático (nome com _auto, .json com o motivo).
+  // opts.auto = corte automático (nome com _auto, motivo nos metadados do MP4).
   async function clip(seconds, opts = {}) {
     seconds = seconds === 60 ? 60 : 30;
     const auto = !!opts.auto;
@@ -1097,21 +1605,27 @@
       // Época anterior (proporção mudou) existe e não cabe no clipe.
       const epochChanged = s.videoChunks.length > 0 && s.videoChunks[0].epoch !== s.epoch;
 
+      // A origem (endereço, título, canal...) vai dentro do MP4, nos metadados (o cortes.py lê
+      // o "comment" que começa com "clip-live:"). Não sai mais .json ao lado do clipe.
+      const meta = sourceInfo(s.key, clickedAt, auto, opts.motivo);
       const buf = await ClipLiveMux.buildMp4(Mediabunny, {
         video: sel.video,
         audio: sel.audio,
         videoConfig: cfgV,
         audioConfig: s.aDecoderConfig,
         audioCodec: s.aCodec,
+        tags: {
+          title: `${meta.canal} - ${meta.titulo}`.slice(0, 200),
+          comment: 'clip-live:' + JSON.stringify(meta),
+          // O Mediabunny grava o "date" só com o dia, em UTC: vai a data local à meia-noite UTC, para
+          // não virar o dia seguinte depois das 21h. A hora vai no creation_time (e no baixado_em).
+          date: new Date(Date.UTC(clickedAt.getFullYear(), clickedAt.getMonth(), clickedAt.getDate())),
+          creationTime: clickedAt,
+        },
       });
 
       const dur = Math.max(1, Math.round(sel.durationUs / 1e6));
       const filename = buildFilename(clickedAt, seconds, auto);
-      // O .json de origem vai antes do .mp4 (quem pega o .mp4 já acha o .json do lado).
-      const meta = sourceInfo(s.key, clickedAt, auto, opts.motivo);
-      const jsonName = filename.replace(/\.mp4$/, '.json');
-      const howJson = await download(new TextEncoder().encode(JSON.stringify(meta, null, 2)), jsonName, 'application/json');
-      log(`origem salva em ${jsonName} via ${howJson}`);
       const how = await download(buf, filename);
 
       let msg;
@@ -1122,10 +1636,15 @@
       if (auto) {
         msg = 'Corte automático salvo';
         if (dur < seconds - 1) msg += epochChanged ? ` (${dur}s, o formato do vídeo mudou)` : ` (${dur}s)`;
+        if (!sel.audio.length) msg += ', sem som';
       }
       toast(msg);
       log(`clipe: ${dur}s, ${sel.video.length} frames, ${sel.audio.length} pacotes de áudio, ${sel.gaps} buraco(s) comprimido(s), ${buf.byteLength} bytes, via ${how}`);
-      return { ok: true, seconds: dur, filename, file: filename.split('/').pop(), message: msg };
+      // Vigia do áudio (e): clipe sem nenhum pacote de áudio numa aba que tem som. Já foi salvo
+      // assim mesmo; reinicia a gravação para o próximo sair com som.
+      const semSom = !sel.audio.length && tabHasSound(s);
+      if (semSom && s === session) audioAct(s, 'clipe montado com 0 pacotes de áudio numa aba com som', 'reiniciar');
+      return { ok: true, seconds: dur, filename, file: filename.split('/').pop(), message: msg, semSom };
     } catch (e) {
       console.error(TAG, 'falha ao montar clipe', e);
       toast('Não consegui montar o clipe (veja o console)');
@@ -1145,12 +1664,12 @@
     return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}T${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}`;
   }
 
-  // Conteúdo do .json de origem (contrato item 5).
+  // Origem do clipe (contrato item 5), gravada no comment do MP4 como "clip-live:" + JSON.
   function sourceInfo(key, d, auto, motivo) {
     const info = {
       url: key ? SITE.liveUrl(key) : location.href,
-      titulo: SITE.title() || '',
-      canal: channelName(),
+      titulo: (SITE.title() || '').slice(0, 300),
+      canal: channelName().slice(0, 80),
       plataforma: SITE.name,
       inicio: null,
       fim: null,
@@ -1570,7 +2089,7 @@
       const res = await clip(autoCfg.clipe_s, { auto: true, motivo: p.motivo });
       if (res && res.ok) {
         auto.saved.push(Date.now());
-        auto.lastClip = { arquivo: res.file, em: localIso(new Date()), motivo: p.motivo };
+        auto.lastClip = { arquivo: res.file, em: localIso(new Date()), motivo: p.motivo, semSom: !!res.semSom };
         auto.error = null;
       } else {
         auto.error = 'Corte automático falhou: ' + (res ? res.error : 'sem resposta');
@@ -1609,10 +2128,21 @@
       aquecendo: st.warming,
       proximo_clipe_em: auto.pending ? localIso(new Date(auto.pending.saveAt)) : null,
       ultimo_clipe: auto.lastClip
-        ? { arquivo: cut(auto.lastClip.arquivo, 120), em: auto.lastClip.em, motivo: cut(auto.lastClip.motivo, 120) }
+        ? {
+          arquivo: cut(auto.lastClip.arquivo, 120),
+          em: auto.lastClip.em,
+          motivo: cut(auto.lastClip.motivo, 120),
+          sem_som: !!auto.lastClip.semSom,
+        }
         : null,
       clipes_hora: lastHour(auto.saved, now).length,
       erro: cut(erro, 160),
+      audio_ok: audioOk(s),
+      audio_problema: cut(audioProblem(), 200),
+      audio_reinicios: audioFixesLastHour(),
+      qualidade: s && s.encW ? `${s.encW}x${s.encH}` : null,
+      qualidade_fonte: sourceQuality(),
+      qualidade_aviso: cut(kq.aviso, 200),
     };
   }
 
@@ -1657,8 +2187,19 @@
 
   // ---------- Mensagens ----------
 
-  chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
+  chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     if (dead || !msg || typeof msg !== 'object') return false;
+    // Só teste: o service worker (ou o popup) manda { type: 'teste-audio', acao } para provar
+    // que o vigia do áudio age. A página não alcança este canal (só chrome.runtime da extensão);
+    // mensagem vinda de outra aba também é recusada.
+    if (msg.type === 'teste-audio') {
+      if (!sender || sender.id !== chrome.runtime.id || sender.tab) {
+        sendResponse({ ok: false, error: 'recusado' });
+        return false;
+      }
+      sendResponse(testeAudio(msg.acao));
+      return false;
+    }
     if (msg.type === 'status') {
       sendResponse(statusOf(session));
       return false;

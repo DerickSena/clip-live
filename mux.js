@@ -140,6 +140,7 @@ var ClipLiveMux = (() => {
    * opts.audio: [{chunk|packet, timestamp (us), duration (us)}] com timestamp >= o do primeiro frame
    * opts.videoConfig / opts.audioConfig: decoderConfig vindos do encoder
    * opts.audioCodec: 'aac' | 'opus' | null
+   * opts.tags: metadados do MP4 (Mediabunny MetadataTags: title, comment, date), opcional
    * Retorna ArrayBuffer.
    */
   async function buildMp4(MB, opts) {
@@ -163,6 +164,8 @@ var ClipLiveMux = (() => {
       aSource = new MB.EncodedAudioPacketSource(audioCodec);
       output.addAudioTrack(aSource);
     }
+    // Metadados do arquivo (a origem do clipe vai dentro do MP4); só dá antes do start().
+    if (opts.tags) output.setMetadataTags(opts.tags);
     await output.start();
 
     // Duração de cada frame = distância até o próximo (o último repete a anterior).

@@ -25,6 +25,19 @@
   background: #ff3b30;
   animation: clip-live-pulse 1.6s ease-in-out infinite;
 }
+.clip-live-auto {
+  align-self: center;
+  margin: 0 2px;
+  padding: 1px 5px;
+  border-radius: 4px;
+  background: rgba(255, 255, 255, 0.18);
+  color: #fff;
+  font: 700 10px/1.4 Roboto, Arial, sans-serif;
+  letter-spacing: 0.5px;
+}
+.clip-live-auto[hidden] {
+  display: none;
+}
 @keyframes clip-live-pulse {
   0%, 100% { opacity: 1; }
   50% { opacity: 0.3; }

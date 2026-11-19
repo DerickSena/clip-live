@@ -1,10 +1,11 @@
 {
   "manifest_version": 3,
   "name": "Clip Live",
-  "version": "1.1.0",
-  "description": "Replay buffer de lives do YouTube: grava os últimos segundos e salva um clipe de 30s ou 1min num clique.",
-  "minimum_chrome_version": "116",
+  "version": "1.2.0",
+  "description": "Replay buffer de lives do YouTube, Twitch e Kick: salva um clipe de 30s ou 1min num clique e corta sozinho quando o chat ri.",
+  "minimum_chrome_version": "120",
   "permissions": [
+    "alarms",
     "downloads",
     "scripting",
     "storage"
@@ -15,7 +16,9 @@
   "content_scripts": [
     {
       "matches": [
-        "https://www.youtube.com/*"
+        "https://www.youtube.com/*",
+        "https://www.twitch.tv/*",
+        "https://kick.com/*"
       ],
       "js": [
         "lib/mediabunny.min.js",
@@ -26,6 +29,15 @@
         "content.css"
       ],
       "run_at": "document_idle"
+    },
+    {
+      "matches": [
+        "https://www.twitch.tv/*"
+      ],
+      "js": [
+        "twitch-quality.js"
+      ],
+      "run_at": "document_start"
     }
   ],
   "action": {
@@ -57,6 +69,9 @@
     }
   },
   "host_permissions": [
-    "https://www.youtube.com/*"
+    "https://www.youtube.com/*",
+    "https://www.twitch.tv/*",
+    "https://kick.com/*",
+    "http://127.0.0.1/*"
   ]
 }

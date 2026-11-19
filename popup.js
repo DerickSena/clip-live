@@ -28,6 +28,7 @@ async function refreshStatus() {
   }
   try {
     const st = await chrome.tabs.sendMessage(tabId, { type: 'status' });
+    refreshAuto(st).catch(() => {});
     if (st && st.error) {
       el.textContent = st.error;
       el.className = 'status';
@@ -46,7 +47,7 @@ async function refreshStatus() {
       // A extensão está na aba, mas não achou live: mostra o porquê.
       const d = st && st.detect;
       el.textContent = d && d.page && d.page.startsWith('/') && !d.page.includes(':')
-        ? 'Abra uma live do YouTube'
+        ? 'Abra uma live do YouTube, Twitch ou Kick'
         : 'Nenhuma live detectada nesta aba (se for live, espere o anúncio acabar)';
       el.className = 'status';
       showDiag(d);
@@ -54,10 +55,11 @@ async function refreshStatus() {
     }
   } catch (e) {
     // Sem resposta: o content script não está nesta aba.
+    refreshAuto(null).catch(() => {});
     const tab = await chrome.tabs.get(tabId).catch(() => null);
-    el.textContent = tab && /^https:\/\/www\.youtube\.com\//.test(tab.url || '')
+    el.textContent = tab && /^https:\/\/(www\.youtube\.com|www\.twitch\.tv|kick\.com)\//.test(tab.url || '')
       ? 'A extensão ainda não está nesta aba: aperte F5 na live'
-      : 'Abra uma live do YouTube';
+      : 'Abra uma live do YouTube, Twitch ou Kick';
     el.className = 'status';
     showDiag(null);
     setButtons(false);
@@ -69,9 +71,40 @@ function showDiag(d) {
   if (!el) return;
   if (!d) { el.hidden = true; return; }
   el.hidden = false;
-  el.textContent = `página ${d.page} · player ${d.player ? 'sim' : 'não'} · vídeo ${d.video ? 'sim' : 'não'}`
-    + ` · selo ao vivo ${d.badge} · ytp-live ${d.ytpLive ? 'sim' : 'não'}`
-    + ` · meta live ${d.meta ? 'sim' : 'não'}${d.endDate ? ' (encerrada)' : ''} · duração ${d.duration}`;
+  el.textContent = `${d.site || ''} · página ${d.page} · player ${d.player ? 'sim' : 'não'} · vídeo ${d.video ? 'sim' : 'não'}`
+    + ` · selo ao vivo ${d.badge}${d.extra ? ' · ' + d.extra : ''} · duração ${d.duration}`;
+}
+
+// Linha do corte automático: estado do painel e da live desta aba.
+let painelInfo = null;
+let painelAt = 0;
+
+async function refreshAuto(st) {
+  const el = $('auto');
+  if (!el) return;
+  if (Date.now() - painelAt > 5000) {
+    painelAt = Date.now();
+    painelInfo = await chrome.runtime.sendMessage({ type: 'painel-status' }).catch(() => null);
+  }
+  const a = st && st.auto;
+  el.className = 'auto';
+  if (painelInfo && painelInfo.ok === false) {
+    el.hidden = false;
+    el.className = 'auto warn';
+    el.textContent = 'Painel fora do ar: o corte automático está parado';
+    return;
+  }
+  if (!a) { el.hidden = true; return; }
+  el.hidden = false;
+  if (!a.ativo) {
+    el.textContent = 'Corte automático: desligado para esta live (liga pelo painel)';
+    return;
+  }
+  let txt = `Corte automático ligado · chat: ${a.chat ? `${a.msgs_10s} msgs e ${a.risadas_10s} risadas em 10 s (normal ${a.base_10s})` : 'não achei o chat'}`;
+  if (a.aquecendo && a.chat) txt += ' · aquecendo';
+  if (a.proximo_clipe_em) txt += ` · salvando às ${a.proximo_clipe_em.slice(11)}`;
+  if (a.ultimo_clipe) txt += ` · último: ${a.ultimo_clipe.em.slice(11)} (${a.clipes_hora} na última hora)`;
+  el.textContent = txt;
 }
 
 function setButtons(on) {
@@ -89,7 +122,7 @@ async function requestClip(seconds) {
     const res = await chrome.tabs.sendMessage(tabId, { type: 'clip', seconds });
     out.textContent = res && res.ok ? res.message : `Não deu: ${res ? res.error : 'sem resposta'}`;
   } catch (e) {
-    out.textContent = 'Não deu: abra uma live do YouTube';
+    out.textContent = 'Não deu: abra uma live do YouTube, Twitch ou Kick';
   }
   busy = false;
   refreshStatus();

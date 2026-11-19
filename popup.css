@@ -58,6 +58,15 @@ li { display: flex; justify-content: space-between; gap: 8px; padding: 2px 0; }
 kbd { font: 12px ui-monospace, Consolas, monospace; color: var(--muted); }
 a { color: var(--accent); }
 
+.auto {
+  margin: -4px 0 10px;
+  padding: 6px 8px;
+  border-radius: 6px;
+  background: var(--btn);
+  font-size: 12px;
+}
+.auto.warn { color: var(--accent); }
+
 .diag {
   margin: -4px 0 10px;
   font-size: 10px;

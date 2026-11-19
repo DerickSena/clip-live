@@ -18,9 +18,9 @@ No popup (ícone da extensão) tem a chave **Ligada / Desligada**. Desligada, a 
 
 ## Como usar
 
-1. Abra uma live do YouTube, da Twitch (`twitch.tv/<canal>`) ou da Kick (`kick.com/<canal>`) e deixe tocando. Quando a gravação começa, aparecem no player um pontinho vermelho e os botões **30s** e **1min** (com tesoura): no YouTube ao lado das configurações, na Twitch e na Kick no canto de cima, à direita.
-2. Aconteceu algo bom? Clique em **30s** ou **1min**. Aparece "Montando clipe..." e depois "Clipe de 30s salvo".
-3. O arquivo vai para `Downloads\clip-live\` com o nome `canal_AAAA-MM-DD_HHhMMmSSs_30s.mp4`. Não sai mais `.json` ao lado: a origem fica dentro do MP4, nos metadados (veja "Metadados do clipe").
+1. Abra uma live do YouTube, da Twitch (`twitch.tv/<canal>`) ou da Kick (`kick.com/<canal>`) e deixe tocando. Quando a gravação começa, aparecem no player um pontinho vermelho e os botões **1min** e **1min30** (com tesoura; o de 30 s saiu na 1.4.0, porque todo corte da Pérola tem mais de 1 min): no YouTube ao lado das configurações, na Twitch e na Kick no canto de cima, à direita.
+2. Aconteceu algo bom? Clique em **1min** ou **1min30**. Aparece "Montando clipe..." e depois "Clipe de 90s salvo".
+3. O arquivo vai para `Downloads\clip-live\` com o nome `canal_AAAA-MM-DD_HHhMMmSSs_90s.mp4`. Não sai mais `.json` ao lado: a origem fica dentro do MP4, nos metadados (veja "Metadados do clipe").
 
 O ícone da extensão abre um painel com o estado da aba ("Gravando: 47s no buffer, encoder 1280x720 (fonte 1280x720)"), uma linha de som e qualidade ("Som: ok", avisos), os mesmos dois botões e a lista de atalhos.
 
@@ -31,7 +31,7 @@ Quando a live da aba está **ativa no painel** (Pérola Painel, aba "Corte autom
 - Conta como risada: `kkk`, `haha`, `hehehe`, `huehue`, `rsrs`, `ksks`, `kaka`, `lmao`, `lul`, `kekw`, `omegalul`, `icant`, e em inglês `lol` (só sozinho na mensagem, ou alongado/repetido como `lool`, `loll`, `lol lol`: "bora de lol" é o jogo), `lmaooo`, `lmfao`, `rofl`, `xd`/`xddd` (só a palavra inteira), `jajaja` (3 vezes ou mais: `jaja` costuma ser "já já"), `kekl`, `lulw`, `pepelaugh`, 😆 😹, 😂 🤣 💀 e `!clip`. O nome de quem escreveu não conta, e cada pessoa conta no máximo 1 risada a cada 10 s (uma pessoa sozinha não faz pico). Um lote grande de mensagens que chega de uma vez (chat pausado que voltou, chat rolado para cima, aba que voltou a aparecer) fica fora da contagem, e nada conta enquanto a Twitch mostra o aviso de chat pausado.
 - Pico: risadas nos últimos 10 s contra o normal (média por janela de 10 s nos últimos 5 min, sem os últimos 20 s). Dispara com pelo menos `max(6, 3 x normal + 2)` risadas e se elas forem pelo menos 25% das mensagens dos 10 s.
 - Antes de poder disparar, lê o chat por 2 min depois de ativar (aquecimento).
-- Disparou: espera 30 s e salva 1 min (30 s antes e 30 s depois do pico), com o nome `..._60s_auto.mp4` e o motivo nos metadados ("14 risadas em 10 s (o normal é 2)"). Pausa de 2 min entre disparos e no máximo 12 por hora por live (F5 não zera a conta). Se a aba mudar de live antes de salvar (raid, outro canal), o corte pendente é descartado. Com corte pendente, a gravação não troca de resolução.
+- Disparou: espera 30 s e salva 1 min 30 (1 min antes e 30 s depois do pico), com o nome `..._90s_auto.mp4` e o motivo nos metadados ("14 risadas em 10 s (o normal é 2)"). Pausa de 2 min entre disparos e no máximo 12 por hora por live (F5 não zera a conta). Se a aba mudar de live antes de salvar (raid, outro canal), o corte pendente é descartado. Com corte pendente, a gravação não troca de resolução.
 - Nos controles do player aparece o selo **AUTO** quando a aba está ativa no painel.
 - Liga e desliga só pelo painel. A extensão consulta `GET http://127.0.0.1:3210/api/auto-clip/extensao` (a cada ~10 s com live aberta e a cada 30 s de reserva) e manda o estado das abas no `POST` da mesma rota. Live ativa sem aba aberta: a extensão abre a live (no máximo 1 vez a cada 5 min).
 - Aba escondida e sem som por mais de 4 min: o navegador segura os timers e o corte pode atrasar; o painel mostra o aviso "aba escondida e sem som".
@@ -74,8 +74,8 @@ Para testar, o service worker pode mandar à aba `{type: 'teste-audio', acao: 'p
 
 ## Atalhos
 
-- `Alt+Shift+1`: clipar os últimos 30s
 - `Alt+Shift+2`: clipar o último 1min
+- `Alt+Shift+3`: clipar o último 1min30 (atalho novo: se não aparecer, defina em `vivaldi://extensions/shortcuts`)
 
 Para mudar: no painel da extensão, clique em **Mudar atalhos** (abre `chrome://extensions/shortcuts`). Se o atalho aparecer vazio, é porque outra extensão ou o Vivaldi já usava a combinação: escolha outra lá.
 

@@ -122,8 +122,8 @@ async function sendClip(seconds, tab) {
 }
 
 chrome.commands.onCommand.addListener((command, tab) => {
-  if (command === 'clip-30') sendClip(30, tab);
-  else if (command === 'clip-60') sendClip(60, tab);
+  if (command === 'clip-60') sendClip(60, tab);
+  else if (command === 'clip-90') sendClip(90, tab);
 });
 
 // Ao instalar ou recarregar a extensão, o navegador não coloca o content script

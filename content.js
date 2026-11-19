@@ -1,8 +1,8 @@
 /*
  * Clip Live: replay buffer de lives do YouTube, da Twitch e da Kick.
  * Enquanto a live toca, codifica o vídeo do player (WebCodecs) e guarda só os
- * últimos BUFFER_SECONDS de conteúdo. Num clique, monta um MP4 com os últimos 30 s ou 60 s.
- * Com a live ativa no painel (Pérola Painel), lê o chat e salva sozinho um clipe de 60 s
+ * últimos BUFFER_SECONDS de conteúdo. Num clique, monta um MP4 com o último 1 min ou 1 min 30.
+ * Com a live ativa no painel (Pérola Painel), lê o chat e salva sozinho um clipe de 1 min 30
  * quando muita gente ri ao mesmo tempo (corte automático).
  *
  * O YouTube exige Trusted Types: nada de innerHTML, todo DOM é montado com createElement.
@@ -20,8 +20,8 @@
     extra: 2,
     proporcao: 0.25, // e as risadas são pelo menos 25% das mensagens dos 10 s
     aquecimento_s: 120, // 2 min lendo o chat antes de poder disparar
-    espera_s: 30, // dispara em T, salva em T+30 s (pega de T-30 a T+30)
-    clipe_s: 60,
+    espera_s: 30, // dispara em T, salva em T+30 s (pega de T-60 a T+30: o pico fica perto do fim)
+    clipe_s: 90, // todo corte da Pérola tem mais de 1 min (Dérick, 19/11)
     pausa_s: 120, // pausa entre disparos
     max_hora: 12, // máximo de clipes automáticos por hora nesta aba
   };
@@ -34,7 +34,7 @@
   const CHAT_FLUSH_MS = 300;
   const ID_RE = /^(yt:[A-Za-z0-9_-]{6,20}|tw:[a-z0-9_]{2,25}|kick:[a-z0-9_-]{2,40})$/;
 
-  const BUFFER_SECONDS = 70;
+  const BUFFER_SECONDS = 100; // cabe o clipe de 1 min 30 com folga
   const KEYFRAME_INTERVAL_US = 1_000_000;
   const MIN_FRAME_GAP_US = 1000; // frame com timestamp repetido (ou quase) é descartado
   const GAP_US = 500_000; // mesmo valor do mux.js: intervalo maior é "buraco"
@@ -1569,7 +1569,7 @@
 
   // opts.auto = corte automático (nome com _auto, motivo nos metadados do MP4).
   async function clip(seconds, opts = {}) {
-    seconds = seconds === 60 ? 60 : 30;
+    seconds = seconds === 60 ? 60 : 90; // só 1 min ou 1 min 30 (o de 30 s saiu em 19/11)
     const auto = !!opts.auto;
     if (clipping) {
       toast('Já estou montando um clipe, espere um pouco');
@@ -1755,7 +1755,7 @@
     badge.textContent = 'AUTO';
     badge.hidden = true;
     box.appendChild(badge);
-    for (const [sec, label] of [[30, '30s'], [60, '1min']]) {
+    for (const [sec, label] of [[60, '1min'], [90, '1min30']]) {
       const b = document.createElement('button');
       b.className = 'clip-live-btn';
       b.type = 'button';

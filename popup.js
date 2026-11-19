@@ -128,8 +128,8 @@ async function refreshAuto(st) {
 }
 
 function setButtons(on) {
-  $('clip30').disabled = !on || busy;
   $('clip60').disabled = !on || busy;
+  $('clip90').disabled = !on || busy;
 }
 
 async function requestClip(seconds) {
@@ -164,8 +164,8 @@ async function showShortcuts() {
   }
 }
 
-$('clip30').addEventListener('click', () => requestClip(30));
 $('clip60').addEventListener('click', () => requestClip(60));
+$('clip90').addEventListener('click', () => requestClip(90));
 $('changeShortcuts').addEventListener('click', (e) => {
   e.preventDefault();
   chrome.tabs.create({ url: 'chrome://extensions/shortcuts' });

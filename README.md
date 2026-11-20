@@ -8,7 +8,7 @@ Tudo acontece no próprio navegador (WebCodecs + [Mediabunny](https://mediabunny
 
 1. Abra `vivaldi://extensions`.
 2. Ligue o **Modo de desenvolvedor** (canto superior direito).
-3. Clique em **Carregar sem compactação** e escolha a pasta `H:\Projetos\clip-live`.
+3. Clique em **Carregar sem compactação** e escolha a pasta onde você baixou o projeto (a que tem o `manifest.json`).
 4. Recarregue as abas de live (YouTube, Twitch, Kick) que já estavam abertas.
 
 No Chrome é igual, em `chrome://extensions`.
